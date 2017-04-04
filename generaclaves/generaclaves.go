@@ -1,6 +1,7 @@
-﻿package main
+package main
 
 import (
+   "flag"
    "os"
    "fmt"
    "crypto/rand"
@@ -8,10 +9,21 @@ import (
    "encoding/pem"
    "crypto/x509"
 )
- 
+
  
 func main() {
-	GenerarArhvivosClave(1024, "publica.key", "privada.pem", "123456")
+    password := flag.String("pwd", "", "Password para proteger la clave privada. OBLIGATORIO")
+    tamanyoClave := flag.Int("size", 2048, "Tamaño en bytes de la clave privada RSA")
+    rutaClavePrivada := flag.String("prv", "private.pem", "Nombre de archivo para la clave privada")
+    rutaClavePublica := flag.String("pub", "public.key", "Nombre de archivo para la clave pública")
+
+    flag.Parse()
+    if *password == "" { 
+        flag.Usage()
+        os.Exit(1)
+    }
+    
+	GenerarArhvivosClave(*tamanyoClave, *rutaClavePrivada, *rutaClavePublica, *password)
 }
 
 func GenerarArhvivosClave(bytes int, nombreClavePublica string, nombreClavePrivada string, passwordPrivada string) {
