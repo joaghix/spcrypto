@@ -17,20 +17,22 @@ import (
 	"io/ioutil"
 	"os"
 	"time"
-	/*
+)
 
-	   "encoding/pem"
-	   "crypto/x509" */)
-
+// Metadato almacena los metadatos del archivo original
 type Metadato struct {
 	Name string
 	Size int64
 }
 
+// BloqueSeguridad se compone de Hash, Clave Datos y Clave Metadatos
 type BloqueSeguridad struct {
 	Hp, Ksd, Ksm []byte
 }
 
+// ArchivoEstructura se compone de Header (identifica tipo archivo), datos
+// cifrados con AES-CTR, Metadatos cifrados con AES-CTR y Bloque de seguridad
+// cifrado con la clave pública RSA facilitada.
 type ArchivoEstructura struct {
 	Header  [6]byte
 	DpPrima []byte
@@ -39,10 +41,10 @@ type ArchivoEstructura struct {
 }
 
 func main() {
-	archivo := flag.String("file", "", "Archivo de datos a encriptar")
-	rutaClavePublica := flag.String("pub", "public.key", "Nombre de archivo con la clave pública del usuario")
-	destino := flag.String("dest", "", "Nombre de archivo destino")
-	tamanyoClave := flag.Int("size", 32, "Tamaño en bytes de la clave aleatoria AES-CTR")
+	archivo := flag.String("file", "", "Archivo de datos a encriptar. OBLIGATORIO")
+	rutaClavePublica := flag.String("pub", "public.key", "Nombre de archivo con la clave pública del usuario. OBLIGATORIO")
+	destino := flag.String("dest", "", "Nombre de archivo destino.")
+	tamanyoClave := flag.Int("size", 32, "Tamaño en bytes de la clave aleatoria AES-CTR : 16, 24 o 32")
 
 	flag.Parse()
 	if *archivo == "" {
@@ -53,6 +55,9 @@ func main() {
 	EncriptarArchivo(*archivo, *rutaClavePublica, *destino, *tamanyoClave)
 }
 
+// EncriptarArchivo produce un archivo encriptado a partir de la ruta de un
+// archivo plano, la ruta al archivo de clave pública. Opcioninalmente se puede
+// indicar el nombre del archivo destino y el tamaño del bloque AES
 func EncriptarArchivo(archivo string, rutaClavePublica string, destino string, tamanyoClave int) {
 
 	start := time.Now()
@@ -71,13 +76,13 @@ func EncriptarArchivo(archivo string, rutaClavePublica string, destino string, t
 	//fmt.Printf("Hash   : %s\n", base64.StdEncoding.EncodeToString(hashHp))
 
 	// PASO 3 : GENERAR CLAVES AES-CTR PARA DATOS
-	bytesKsd := make([]byte, tamanyoClave) // La clave de AES + el IV
+	bytesKsd := make([]byte, tamanyoClave)
 	_, err3 := rand.Read(bytesKsd)
 	//fmt.Printf("Ksd    : %x\n", bytesKsd)
 	chk(err3)
 
 	// PASO 4 : GENERAR CLAVES AES-CTR PARA METADATOS
-	bytesKsm := make([]byte, tamanyoClave) // La clave de AES + el IV
+	bytesKsm := make([]byte, tamanyoClave)
 	_, err4 := rand.Read(bytesKsm)
 	//fmt.Printf("Ksm    : %x\n", bytesKsm)
 	chk(err4)
@@ -103,12 +108,15 @@ func EncriptarArchivo(archivo string, rutaClavePublica string, destino string, t
 	chk(err9)
 
 	// PASO 8 : CIFRAR BLOQUE SEGURIDAD MEDIANTE RSA
-	label := []byte("seguridad") // Se puede usar para identificar el bloque
+	label := []byte("seguridad") // Se puede usar en el futuro para identificar el bloque
 	BloqueBsPrima, err10 := rsa.EncryptOAEP(sha256.New(), rand.Reader, AbrirYExtraerClavePublica(rutaClavePublica), BloqueBs, label)
 	chk(err10)
 
-	// PASO 9 : CONSTRUIR ARCHIVO CIFRADO https://play.golang.org/p/TSN52PtbzL y la lectura https://play.golang.org/p/mNouNnMOwW
+	// PASO 9 : CONSTRUIR ARCHIVO CIFRADO
 	nombreArchivoFinal := (*fileInfoMp).Name() + ".spcr"
+	if destino != "" {
+		nombreArchivoFinal = destino
+	}
 	fileFinal, err11 := os.Create(nombreArchivoFinal)
 	chk(err11)
 	defer fileFinal.Close()
@@ -132,6 +140,7 @@ func EncriptarArchivo(archivo string, rutaClavePublica string, destino string, t
 }
 
 // GetAESCTRWriter crea un io.Writer que encapsula el cigrado en flujo AES-CTR
+// mediante la clave AES proporcionada y el Writer destino (File, buffer...)
 func GetAESCTRWriter(clave []byte, fileWriter io.Writer) io.Writer {
 
 	aesBlock, err := aes.NewCipher(clave) // Con la primera parte de la clave
@@ -143,6 +152,8 @@ func GetAESCTRWriter(clave []byte, fileWriter io.Writer) io.Writer {
 	return &cipher.StreamWriter{S: aesCtr, W: fileWriter}
 }
 
+// AbrirYExtraerMetadatosArchivo abre el archivo origen y devuelve su descriptor
+// y una estructura FileInfo con los metadatos.
 func AbrirYExtraerMetadatosArchivo(archivo string) (*os.File, *os.FileInfo) {
 
 	fileInfo, errM := os.Stat(archivo)
@@ -154,6 +165,8 @@ func AbrirYExtraerMetadatosArchivo(archivo string) (*os.File, *os.FileInfo) {
 	return f, &fileInfo
 }
 
+// AbrirYExtraerClavePublica analiza y extrae la clave pública a partir de la
+// ruta a un archivo con formato PEM y bloque X509
 func AbrirYExtraerClavePublica(archivoClavePublica string) *rsa.PublicKey {
 
 	bytesArchivo, err := ioutil.ReadFile(archivoClavePublica)
@@ -170,6 +183,7 @@ func AbrirYExtraerClavePublica(archivoClavePublica string) *rsa.PublicKey {
 	return pub.(*rsa.PublicKey)
 }
 
+// ObtenerHashSha512 calcula la suma SHA-512 a partir de los datos de un archivo
 func ObtenerHashSha512(archivo *os.File) []byte {
 	sha512 := sha512.New()
 
@@ -179,17 +193,19 @@ func ObtenerHashSha512(archivo *os.File) []byte {
 	return sha512.Sum(nil)
 }
 
-// función para comprobar errores (ahorra escritura)
+// chk comprueba errores (ahorra escritura)
 func chk(e error) {
 	if e != nil {
 		panic(e)
 	}
 }
 
+// GetMetadato obtiene un objeto Metadato a partir de FileInfo
 func GetMetadato(info os.FileInfo) Metadato {
 	return Metadato{info.Name(), info.Size()}
 }
 
+// GetBytes obtiene un array con los bytes contenidos en cualquier objeto.
 func GetBytes(key interface{}) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
