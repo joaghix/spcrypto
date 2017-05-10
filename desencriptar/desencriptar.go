@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"encoding/gob"
 	"encoding/pem"
@@ -40,8 +43,6 @@ func main() {
 	archivo := flag.String("file", "", "Archivo de datos a encriptar. OBLIGATORIO")
 	rutaClavePrivada := flag.String("prv", "private.pem", "Nombre de archivo para la clave privada. OBLIGATORIO")
 	//tamanyoClave := flag.Int("size", 32, "Tamaño en bytes de la clave aleatoria AES-CTR : 16, 24 o 32")
-	var objeto ArchivoEstructura
-	var bSeguridad BloqueSeguridad
 
 	flag.Parse()
 	if *archivo == "" {
@@ -49,14 +50,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	DesencriptarArchivo(*archivo, *rutaClavePrivada, objeto, bSeguridad)
+	DesencriptarArchivo(*archivo, *rutaClavePrivada)
 }
 
 // DesencriptarArchivo descompone un archivo encriptado en un archivo plano y metadatos
 // a partir de la ruta al archivo de clave privada.
-func DesencriptarArchivo(archivo string, rutaClavePrivada string, objeto ArchivoEstructura, bSeguridad BloqueSeguridad) {
+func DesencriptarArchivo(archivo string, rutaClavePrivada string) {
 
 	start := time.Now()
+	var objeto ArchivoEstructura
 
 	fmt.Println("Desencriptando...")
 
@@ -77,9 +79,30 @@ func DesencriptarArchivo(archivo string, rutaClavePrivada string, objeto Archivo
 	chk(err3)
 
 	// PASO 3 : DESCOMPONER BLOQUE DE SEGURIDAD
-	//bSeguridad, err4 := GetBytes(BloqueBs)
-	//hashHp := bSeguridad.Hp
-	//chk(err4)
+	bSeguridad := GetBloqueSeguridad(BloqueBs)
+
+	// PASO 4 : DESCIFRAR METADATOS
+	fileInfoMp, err4 := DecryptAESCTR(bSeguridad.Ksm, fileMpPrima)
+	chk(err4)
+
+	// PASO 5 : DESCIFRAR DATOS PLANOS
+	fileDp, err5 := DecryptAESCTR(bSeguridad.Ksd, fileDpPrima)
+	chk(err5)
+
+	// PASO 6 : OBTENER HASH DATOS Y COMPARACIÓN CON EL HASH DEL BLOQUE DE
+	// SEGURIDAD
+	hashHp := ObtenerHashSha512(fileDp)
+
+	/*if hashHp := ObtenerHashSha512(fileDp); hashHp != bSeguridad.Hp {
+		fmt.Printf("Los códigos Hash son idénticos, se mantiene la integridad")
+	} else {
+		fmt.Printf("Los códigos Hash son diferentes, se han modificado datos")
+	}*/
+
+	// PASO 7 : CONSTRUIR EL ARCHIVO PLANO A PARTIR DEL FICHERO DE DATOS PLANOS
+	// Y LOS METADATOS
+	archivo1 := string(fileDp[:])
+	fileDp1, fileInfoMp1 := AbrirYExtraerMetadatosArchivo(archivo1)
 
 	elapsed := time.Since(start)
 	fmt.Printf("Tiempo : %s\n", elapsed.String())
@@ -103,15 +126,53 @@ func AbrirYExtraerClavePrivada(archivoClavePrivada string) *rsa.PrivateKey {
 	return prv.(*rsa.PrivateKey)
 }
 
-// GetBytes obtiene un array con los bytes contenidos en cualquier objeto.
-func GetBytes(key interface{}) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	err := enc.Encode(key)
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+// GetBloqueSeguridad obtiene una estructura tipo BloqueSeguridad que almacenará
+// el código Hash y 2 claves aleatorias
+func GetBloqueSeguridad(datos []byte) BloqueSeguridad {
+	var resultado BloqueSeguridad
+	dec := gob.NewDecoder(bytes.NewReader(datos))
+	dec.Decode(resultado)
+
+	return resultado
+}
+
+// DecryptAESCTR descifra un mensaje cifrado a partir de la clave aleatoria
+// que se ha utilizado para cifrarlo
+func DecryptAESCTR(clave []byte, mensaje []byte) ([]byte, error) {
+
+	aesBlock, err := aes.NewCipher(clave) // Con la primera parte de la clave
+	chk(err)
+
+	iv := make([]byte, aes.BlockSize) // Tamaño del bloque
+	aesCtr := cipher.NewCTR(aesBlock, iv)
+	resultado := make([]byte, len(mensaje))
+
+	aesCtr.XORKeyStream(resultado, mensaje)
+
+	return resultado, nil
+}
+
+// ObtenerHashSha512 calcula la suma SHA-512 a partir de los datos de un archivo
+func ObtenerHashSha512(archivo []byte) []byte {
+	sha512 := sha512.New()
+
+	/*_, err := io.Copy(sha512, archivo)
+	chk(err)*/
+
+	return sha512.Sum(nil)
+}
+
+// AbrirYExtraerMetadatosArchivo abre el archivo origen y devuelve su descriptor
+// y una estructura FileInfo con los metadatos.
+func AbrirYExtraerMetadatosArchivo(archivo string) (*os.File, *os.FileInfo) {
+
+	fileInfo, errM := os.Stat(archivo)
+	chk(errM)
+
+	f, err := os.Open(archivo)
+	chk(err)
+
+	return f, &fileInfo
 }
 
 // chk comprueba errores (ahorra escritura)
