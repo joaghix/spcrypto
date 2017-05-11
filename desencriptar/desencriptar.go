@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"time"
@@ -93,20 +94,25 @@ func DesencriptarArchivo(archivo string, rutaClavePrivada string) {
 	// SEGURIDAD
 	hashHp := ObtenerHashSha512(fileDp)
 
-	/*if hashHp := ObtenerHashSha512(fileDp); hashHp != bSeguridad.Hp {
+	if esigual := Compare(hashHp, bSeguridad.Hp); esigual == 0 {
 		fmt.Printf("Los códigos Hash son idénticos, se mantiene la integridad")
 	} else {
 		fmt.Printf("Los códigos Hash son diferentes, se han modificado datos")
-	}*/
+	}
 
 	// PASO 7 : CONSTRUIR EL ARCHIVO PLANO A PARTIR DEL FICHERO DE DATOS PLANOS
 	// Y LOS METADATOS
-	archivo1 := string(fileDp[:])
-	fileDp1, fileInfoMp1 := AbrirYExtraerMetadatosArchivo(archivo1)
+	// Convertir array de bytes a una string
+	archivoPlano := string(fileDp[:])
+	metadatos := string(fileInfoMp[:])
+
+	fileDpDestino, fileInfoMpDestino := AbrirYcopiarMetadatosArchivo(archivoPlano, metadatos)
 
 	elapsed := time.Since(start)
 	fmt.Printf("Tiempo : %s\n", elapsed.String())
 }
+
+// FUNCIONES
 
 // AbrirYExtraerClavePrivada analiza y extrae la clave privada a partir de la
 // ruta a un archivo con formato PEM y bloque X509
@@ -162,17 +168,39 @@ func ObtenerHashSha512(archivo []byte) []byte {
 	return sha512.Sum(nil)
 }
 
-// AbrirYExtraerMetadatosArchivo abre el archivo origen y devuelve su descriptor
-// y una estructura FileInfo con los metadatos.
-func AbrirYExtraerMetadatosArchivo(archivo string) (*os.File, *os.FileInfo) {
+// AbrirYcopiarMetadatos abre el archivo de datos y el archivo metadatos y
+// y copia los metadatos en el archivo de datos devolviendo el descriptor
+// del archivo de datos y su estructura FileInfo con los metadatos.
+func AbrirYcopiarMetadatosArchivo(aDatos string, aMetadatos string) (*os.File, *os.FileInfo) {
 
-	fileInfo, errM := os.Stat(archivo)
+	srcFile, err := os.Open(aMetadatos)
+	chk(err)
+	defer srcFile.Close()
+
+	destFile, err := os.Open(aDatos)
+	chk(err)
+	defer destFile.Close()
+
+	fileInfo, errM := os.Stat(aDatos)
 	chk(errM)
 
-	f, err := os.Open(archivo)
+	_, err = io.Copy(destFile, srcFile)
 	chk(err)
 
-	return f, &fileInfo
+	err = destFile.Sync()
+	chk(err)
+
+	return destFile, &fileInfo
+}
+
+// Compare compara si dos arrays de bytes son iguales
+func Compare(a, b []byte) int {
+	if a == b {
+		return 0
+	} else {
+		return -1
+	}
+	return +1
 }
 
 // chk comprueba errores (ahorra escritura)
