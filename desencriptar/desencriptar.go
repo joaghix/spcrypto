@@ -43,6 +43,7 @@ type ArchivoEstructura struct {
 func main() {
 	archivo := flag.String("file", "", "Archivo de datos a encriptar. OBLIGATORIO")
 	rutaClavePrivada := flag.String("prv", "private.pem", "Nombre de archivo para la clave privada. OBLIGATORIO")
+	pwd := flag.String("pwd", "", "Contraseña de protección de clave privada. OBLIGATORIO")
 	//tamanyoClave := flag.Int("size", 32, "Tamaño en bytes de la clave aleatoria AES-CTR : 16, 24 o 32")
 
 	flag.Parse()
@@ -51,15 +52,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	DesencriptarArchivo(*archivo, *rutaClavePrivada)
+	DesencriptarArchivo(*archivo, *rutaClavePrivada, *pwd)
 }
 
 // DesencriptarArchivo descompone un archivo encriptado en un archivo plano y metadatos
 // a partir de la ruta al archivo de clave privada.
-func DesencriptarArchivo(archivo string, rutaClavePrivada string) {
+func DesencriptarArchivo(archivo string, rutaClavePrivada string, password string) {
 
 	start := time.Now()
-	var objeto ArchivoEstructura
 
 	fmt.Println("Desencriptando...")
 
@@ -68,7 +68,8 @@ func DesencriptarArchivo(archivo string, rutaClavePrivada string) {
 	fileCifrado, err1 := os.Open(archivo)
 	chk(err1)
 	decFichero := gob.NewDecoder(fileCifrado)
-	err2 := decFichero.Decode(objeto)
+	var objeto ArchivoEstructura
+	err2 := decFichero.Decode(&objeto)
 	fileDpPrima := objeto.DpPrima
 	fileMpPrima := objeto.MpPrima
 	BloqueBsPrima := objeto.BsPrima
@@ -76,14 +77,17 @@ func DesencriptarArchivo(archivo string, rutaClavePrivada string) {
 
 	// PASO 2 : DESCIFRAR BLOQUE SEGURIDAD
 	label := []byte("seguridad") // Se puede usar en el futuro para identificar el bloque
-	BloqueBs, err3 := rsa.DecryptOAEP(sha256.New(), rand.Reader, AbrirYExtraerClavePrivada(rutaClavePrivada), BloqueBsPrima, label)
+	BloqueBs, err3 := rsa.DecryptOAEP(sha256.New(), rand.Reader, AbrirYExtraerClavePrivada(rutaClavePrivada, password), BloqueBsPrima, label)
 	chk(err3)
 
 	// PASO 3 : DESCOMPONER BLOQUE DE SEGURIDAD
+	fmt.Printf("%x\n", BloqueBs)
 	bSeguridad := GetBloqueSeguridad(BloqueBs)
 
+	fmt.Printf("%x\n", bSeguridad.Ksm)
 	// PASO 4 : DESCIFRAR METADATOS
 	fileInfoMp, err4 := DecryptAESCTR(bSeguridad.Ksm, fileMpPrima)
+	metadato := GetBloqueMetadatos(fileInfoMp)
 	chk(err4)
 
 	// PASO 5 : DESCIFRAR DATOS PLANOS
@@ -94,7 +98,7 @@ func DesencriptarArchivo(archivo string, rutaClavePrivada string) {
 	// SEGURIDAD
 	hashHp := ObtenerHashSha512(fileDp)
 
-	if esigual := Compare(hashHp, bSeguridad.Hp); esigual == 0 {
+	if bytes.Compare(hashHp, bSeguridad.Hp) == 0 {
 		fmt.Printf("Los códigos Hash son idénticos, se mantiene la integridad")
 	} else {
 		fmt.Printf("Los códigos Hash son diferentes, se han modificado datos")
@@ -103,10 +107,14 @@ func DesencriptarArchivo(archivo string, rutaClavePrivada string) {
 	// PASO 7 : CONSTRUIR EL ARCHIVO PLANO A PARTIR DEL FICHERO DE DATOS PLANOS
 	// Y LOS METADATOS
 	// Convertir array de bytes a una string
-	archivoPlano := string(fileDp[:])
-	metadatos := string(fileInfoMp[:])
+	fileDestino, err6 := os.Create(metadato.Name)
+	chk(err6)
+	fileDestino.Write(fileDp)
 
-	fileDpDestino, fileInfoMpDestino := AbrirYcopiarMetadatosArchivo(archivoPlano, metadatos)
+	//archivoPlano := string(fileDp[:])
+	//metadatos := string(fileInfoMp[:])
+
+	//fileDpDestino, fileInfoMpDestino := AbrirYcopiarMetadatosArchivo(archivoPlano, metadatos)
 
 	elapsed := time.Since(start)
 	fmt.Printf("Tiempo : %s\n", elapsed.String())
@@ -116,20 +124,23 @@ func DesencriptarArchivo(archivo string, rutaClavePrivada string) {
 
 // AbrirYExtraerClavePrivada analiza y extrae la clave privada a partir de la
 // ruta a un archivo con formato PEM y bloque X509
-func AbrirYExtraerClavePrivada(archivoClavePrivada string) *rsa.PrivateKey {
+func AbrirYExtraerClavePrivada(archivoClavePrivada string, password string) *rsa.PrivateKey {
 
 	bytesArchivo, err := ioutil.ReadFile(archivoClavePrivada)
 	chk(err)
 
 	bloque, _ := pem.Decode(bytesArchivo)
-	if bloque == nil || bloque.Type != "BEGIN PRIVATE KEY" {
+	if bloque == nil || bloque.Type != "RSA PRIVATE KEY" {
 		panic("El formato de clave privada no es adecuado")
 	}
 
-	prv, err2 := x509.ParsePKCS8PrivateKey(bloque.Bytes)
+	prv, err2 := x509.DecryptPEMBlock(bloque, []byte(password))
 	chk(err2)
 
-	return prv.(*rsa.PrivateKey)
+	key, err3 := x509.ParsePKCS1PrivateKey(prv)
+	chk(err3)
+
+	return key
 }
 
 // GetBloqueSeguridad obtiene una estructura tipo BloqueSeguridad que almacenará
@@ -137,7 +148,15 @@ func AbrirYExtraerClavePrivada(archivoClavePrivada string) *rsa.PrivateKey {
 func GetBloqueSeguridad(datos []byte) BloqueSeguridad {
 	var resultado BloqueSeguridad
 	dec := gob.NewDecoder(bytes.NewReader(datos))
-	dec.Decode(resultado)
+	dec.Decode(&resultado)
+
+	return resultado
+}
+
+func GetBloqueMetadatos(datos []byte) Metadato {
+	var resultado Metadato
+	dec := gob.NewDecoder(bytes.NewReader(datos))
+	dec.Decode(&resultado)
 
 	return resultado
 }
@@ -191,16 +210,6 @@ func AbrirYcopiarMetadatosArchivo(aDatos string, aMetadatos string) (*os.File, *
 	chk(err)
 
 	return destFile, &fileInfo
-}
-
-// Compare compara si dos arrays de bytes son iguales
-func Compare(a, b []byte) int {
-	if a == b {
-		return 0
-	} else {
-		return -1
-	}
-	return +1
 }
 
 // chk comprueba errores (ahorra escritura)
