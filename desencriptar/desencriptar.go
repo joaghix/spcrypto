@@ -81,10 +81,8 @@ func DesencriptarArchivo(archivo string, rutaClavePrivada string, password strin
 	chk(err3)
 
 	// PASO 3 : DESCOMPONER BLOQUE DE SEGURIDAD
-	fmt.Printf("%x\n", BloqueBs)
 	bSeguridad := GetBloqueSeguridad(BloqueBs)
 
-	fmt.Printf("%x\n", bSeguridad.Ksm)
 	// PASO 4 : DESCIFRAR METADATOS
 	fileInfoMp, err4 := DecryptAESCTR(bSeguridad.Ksm, fileMpPrima)
 	metadato := GetBloqueMetadatos(fileInfoMp)
@@ -99,9 +97,10 @@ func DesencriptarArchivo(archivo string, rutaClavePrivada string, password strin
 	hashHp := ObtenerHashSha512(fileDp)
 
 	if bytes.Compare(hashHp, bSeguridad.Hp) == 0 {
-		fmt.Printf("Los códigos Hash son idénticos, se mantiene la integridad")
+		fmt.Println("Los códigos Hash son idénticos, se mantiene la integridad")
 	} else {
-		fmt.Printf("Los códigos Hash son diferentes, se han modificado datos")
+		fmt.Printf("Los códigos Hash son diferentes, se han modificado datos:\nOrigen :%x\n", bSeguridad.Hp)
+		fmt.Printf("Destino: %x\n", hashHp)
 	}
 
 	// PASO 7 : CONSTRUIR EL ARCHIVO PLANO A PARTIR DEL FICHERO DE DATOS PLANOS
@@ -180,10 +179,7 @@ func DecryptAESCTR(clave []byte, mensaje []byte) ([]byte, error) {
 // ObtenerHashSha512 calcula la suma SHA-512 a partir de los datos de un archivo
 func ObtenerHashSha512(archivo []byte) []byte {
 	sha512 := sha512.New()
-
-	/*_, err := io.Copy(sha512, archivo)
-	chk(err)*/
-
+	sha512.Write(archivo)
 	return sha512.Sum(nil)
 }
 
